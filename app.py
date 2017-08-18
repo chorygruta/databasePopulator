@@ -61,7 +61,7 @@ app = Flask(__name__)
 
 app.config['SECRET_KEY'] = 'thisisasecret'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:Kookinwats@localhost/recipeDatabase'
-app.config['SERVER_NAME'] = 'localhost:5000'
+#app.config['SERVER_NAME'] = 'localhost:5000'
 
 heroku = Heroku(app)
 db = SQLAlchemy(app)
