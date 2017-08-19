@@ -1,0 +1,24 @@
+<html>
+  <head>
+    <title>dbPopulator | Configurations</title>
+  </head>
+  <body>
+    <h1>Add Recipes</h1>
+    <form method = "POST" action="/">
+      <p><strong>Enter API KEY</strong></p>
+      <input type="text" name="api" style ="width:300px;" placeholder="Paste Food API key here"  value = {{api}}>
+
+      <p><strong>Enter random count</strong></p>
+      <input type="number" name="random" placeholder="Can't be less than 2" style ="width:300px;" value = {{random}} >
+
+      <br><br><input type ="submit" value = "Populate">
+
+      <br><br>
+      <h1>DATABASE</h1>
+      <h2>Total Recipes: {{totalRecipes}}</h2>
+      <h2>Total Similar Recipes: {{totalSimilar}}</h2>
+      <h2>Total Requests: {{(totalRequests)}} </h2>
+
+    </form>
+  </body>
+</html>

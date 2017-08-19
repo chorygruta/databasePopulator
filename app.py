@@ -4,7 +4,7 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import Column, Integer, ForeignKey, exists
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
-from flask.ext.heroku import Heroku
+from flask_heroku import Heroku
 import json
 import sys
 
@@ -198,259 +198,267 @@ class ingredientAmount(db.Model):
     recipe_id = db.Column(db.Integer, nullable=False)
     ingredient_id = db.Column(db.Integer, db.ForeignKey('ingredient.id'),nullable=False)
 
-@app.route('/totalrecipes')
+@app.route('/totalrows')
 def totalRecipes():
-    total = Recipe.query.count()
-    return '<h1>Total Recipes in the Database: '+str(total)+'</h1>'
+    totalrows = 0
 
-@app.route('/print')
-def printRecipe():
+    totalrows += Recipe.query.count() + Detail.query.count() + NutritionFact.query.count()
+    totalrows += SimilarRecipe.query.count() + Instruction.query.count() +ingredientAmount.query.count()
 
-    searchID = 694901
-    #x = Ingredient.query.filter(ingredients.any(id=9292)).all()
-    x = Ingredient.query.join(Ingredient.recipes).filter_by(id=searchID).all()
-    r = Recipe.query.get(searchID)
+    for r in Recipe.query.all():
+        totalrows += Ingredient.query.join(Ingredient.recipes).filter_by(id=r.id).count()
+        totalrows += Cuisine.query.join(Cuisine.recipes).filter_by(id=r.id).count()
+        totalrows += DishType.query.join(DishType.recipes).filter_by(id=r.id).count()
+        totalrows += Diet.query.join(Diet.recipes).filter_by(id=r.id).count()
+        totalrows += Equipment.query.join(Equipment.recipes).filter_by(id=r.id).count()
 
-    return render_template('print.html', ingredient=x, recipe=r )
+    return str(totalrows)
 
-@app.route('/addRecipe/<apiKey>')
-def addRecipe(apiKey):
+
+@app.route('/', methods=['GET', 'POST'])
+def addRecipe():
+
     totalRequests = 0
-    ifCommit = True
-    #get a random recipe
-    randomCount = 2 # this can't be 1
-    totalRequests += 1
-    random = requests.get('https://spoonacular-recipe-food-nutrition-v1.p.mashape.com/recipes/random?limitLicense=true&number=' + str(randomCount) ,
-    headers={
-    "X-Mashape-Key": apiKey,
-    "Accept": "application/json"
-      }
-    )
-    for i in range(0,randomCount-1):
-        #get similar recipes of the random recipe
+
+    #return render_template('config.html', random = request.form['random'], api = request.form['api'], totalRecipes = str(Recipe.query.count()), totalSimilar = str(SimilarRecipe.query.count()),  totalRequests = str(totalRequests))
+
+    if request.method != 'POST':
+        return render_template('config.html', totalRecipes = str(Recipe.query.count()), totalSimilar = str(SimilarRecipe.query.count()),  totalRequests = str(totalRequests))
+    else:
+
+        ifCommit = True
+        apiKey = str(request.form['api'])
+        randomCount = int(request.form['random'])
+
         totalRequests += 1
-        s = requests.get('https://spoonacular-recipe-food-nutrition-v1.p.mashape.com/recipes/' +str(random.json()["recipes"][i]["id"])+ '/similar',
+        random = requests.get('https://spoonacular-recipe-food-nutrition-v1.p.mashape.com/recipes/random?limitLicense=true&number=' + str(randomCount) ,
         headers={
         "X-Mashape-Key": apiKey,
         "Accept": "application/json"
           }
         )
-        similarJson = s.json()
+        for i in range(0,randomCount-1):
+            #get similar recipes of the random recipe
+            totalRequests += 1
+            s = requests.get('https://spoonacular-recipe-food-nutrition-v1.p.mashape.com/recipes/' +str(random.json()["recipes"][i]["id"])+ '/similar',
+            headers={
+            "X-Mashape-Key": apiKey,
+            "Accept": "application/json"
+              }
+            )
+            similarJson = s.json()
 
-        similar_list = []
-        slist = ''
+            similar_list = []
+            slist = ''
 
-        similarAddList =[]
-        #saves all the similar recipes' Ids to similar_list
+            similarAddList =[]
+            #saves all the similar recipes' Ids to similar_list
 
-        for similar in similarJson:
-            similar_list.append(similar["id"])
-            slist += str(similar["id"]) + ', '
+            for similar in similarJson:
+                similar_list.append(similar["id"])
+                slist += str(similar["id"]) + ', '
 
-        for sl in similar_list:
-            with db.session.no_autoflush:
-                #checks if the recipe already exists in the database
-                if Recipe.query.get(sl):
-                    return 'recipe already exists'
+            for sl in similar_list:
+                with db.session.no_autoflush:
+                    #checks if the recipe already exists in the database
+                    if Recipe.query.get(sl):
+                        return 'recipe already exists'
 
-                else:
-                    totalRequests += 1
-                    searchRequest = requests.get('https://spoonacular-recipe-food-nutrition-v1.p.mashape.com/recipes/'+str(sl)+'/information?includeNutrition=true',
-                    headers={
-                    "X-Mashape-Key": apiKey,
-                    "Accept": "application/json"
-                      }
-                    )
-                    json = searchRequest.json()
-
-                    #return str(len(json["cuisines"]))
-                    if len(json["analyzedInstructions"]) == 1 and len(json["cuisines"]):#!= 0 and len(json["dishTypes"]) != 0:# and len(json["diets"]) != 0:
-
-                        jRecipeID = json["id"]
-
-            ######################################################################################################################################################################################
-                        # Creates a new Recipe Object
-                        recipeObj = Recipe(id=jRecipeID,
-                                           title = json["title"],
-                                           imageUrl = json["image"]
-                                           )
-            ######################################################################################################################################################################################
-                        cuisineString = ''
-                        for cuisines in json["cuisines"]:
-                            cuisineString += cuisines + ', '
-                        if "sourceName" in json:
-                            detailObj = Detail( recipeSourceUrl = json["sourceUrl"],
-                                                recipeSourceName = json["sourceName"],
-                                                readyInMinutes = json["readyInMinutes"],
-                                                servings = json["servings"],
-                                                pricePerServing = json["pricePerServing"]/100,
-                                                saveCount = 0,
-                                                recipe_id = jRecipeID,
-                                                recipe = recipeObj
-                                                )
-                        else:
-                            detailObj = Detail( recipeSourceUrl = json["sourceUrl"],
-                                                recipeSourceName = '',
-                                                readyInMinutes = json["readyInMinutes"],
-                                                servings = json["servings"],
-                                                pricePerServing = json["pricePerServing"]/100,
-                                                saveCount = 0,
-                                                recipe_id = jRecipeID,
-                                                recipe = recipeObj
-                                                )
-
-            ######################################################################################################################################################################################
-                        nutritionfactObj = NutritionFact (  vegetarian = json["vegetarian"],
-                                                            vegan = json["vegan"],
-                                                            glutenFree = json["glutenFree"],
-                                                            dairyFree = json["dairyFree"],
-                                                            calories = str(json["nutrition"]["nutrients"][0]["amount"]) + ' ' + json["nutrition"]["nutrients"][0]["unit"],
-                                                            fat = str(json["nutrition"]["nutrients"][1]["amount"]) + ' ' + json["nutrition"]["nutrients"][1]["unit"],
-                                                            saturatedFat = str(json["nutrition"]["nutrients"][2]["amount"]) + ' ' + json["nutrition"]["nutrients"][2]["unit"],
-                                                            carbohydrates = str(json["nutrition"]["nutrients"][3]["amount"]) + ' ' + json["nutrition"]["nutrients"][3]["unit"],
-                                                            sugar = str(json["nutrition"]["nutrients"][4]["amount"]) + ' ' + json["nutrition"]["nutrients"][4]["unit"],
-                                                            cholesterol = str(json["nutrition"]["nutrients"][5]["amount"]) + ' ' + json["nutrition"]["nutrients"][5]["unit"],
-                                                            sodium = str(json["nutrition"]["nutrients"][6]["amount"]) + ' ' + json["nutrition"]["nutrients"][6]["unit"],
-                                                            protein = str(json["nutrition"]["nutrients"][7]["amount"]) + ' ' + json["nutrition"]["nutrients"][7]["unit"],
-                                                            fiber = str(json["nutrition"]["nutrients"][14]["amount"]) + ' ' + json["nutrition"]["nutrients"][14]["unit"],
-                                                            recipe_id = json["id"],
-                                                            recipe = recipeObj
-                                                        )
-            ######################################################################################################################################################################################
-                        if len(json["analyzedInstructions"]) == 1:
-                            upperRange = len(json["analyzedInstructions"][0]["steps"])
-                            e_list = []
-
-                            for ins in range(0,upperRange):
-                                insNumber = json["analyzedInstructions"][0]["steps"][ins]["number"]
-                                insStep = json["analyzedInstructions"][0]["steps"][ins]["step"]
-
-                                instructionObj = Instruction(stepNumber = insNumber,
-                                                             stepDescription = insStep,
-                                                             recipe_id = jRecipeID
-                                                             )
-                                recipeObj.instructions.append(instructionObj)
-
-                                for eq in range(0, len(json["analyzedInstructions"][0]["steps"][ins]["equipment"])):
-                                    e = json["analyzedInstructions"][0]["steps"][ins]["equipment"][eq]
-                                    if e["name"] in e_list:
-                                        pass
-                                    else:
-                                        if Equipment.query.filter_by(name=e["name"]).first():
-                                            recipeObj.equipments.append(Equipment.query.filter_by(name=e["name"]).first())
-                                        else:
-                                            if "image" in e:
-                                                e_image = e["image"]
-                                            else:
-                                                e_image = ""
-                                            equipmentObj = Equipment(name=e["name"], imageUrl=e_image)
-                                            recipeObj.equipments.append(equipmentObj)
-                                            db.session.add(equipmentObj)
-                                            db.session.commit()
-                                        e_list.append(e["name"])
-
-            ######################################################################################################################################################################################
-                        cuisineUpperRange = len(json["cuisines"])
-                        for i in range(0,cuisineUpperRange):
-                            #print (json["cuisines"][i])
-                            if Cuisine.query.filter_by(name=json["cuisines"][i]).first():
-                                recipeObj.cuisines.append(Cuisine.query.filter_by(name=json["cuisines"][i]).first())
-                            else:
-                                cuisineObj = Cuisine(name=json["cuisines"][i])
-                                recipeObj.cuisines.append(cuisineObj)
-                                db.session.add(cuisineObj)
-
-                        dishtypeUpperRange = len(json["dishTypes"])
-                        for i in range(0,dishtypeUpperRange):
-                            if DishType.query.filter_by(name=json["dishTypes"][i]).first():
-                                recipeObj.dishtypes.append(DishType.query.filter_by(name=json["dishTypes"][i]).first())
-                            else:
-                                dishtypeObj = DishType(name=json["dishTypes"][i])
-                                recipeObj.dishtypes.append(dishtypeObj)
-                                db.session.add(dishtypeObj)
-
-                        dietUpperRange = len(json["diets"])
-                        for i in range(0,dietUpperRange):
-                            if Diet.query.filter_by(name=json["diets"][i]).first():
-                                recipeObj.diets.append(Diet.query.filter_by(name=json["diets"][i]).first())
-                            else:
-                                dietObj = Diet(name=json["diets"][i])
-                                recipeObj.diets.append(dietObj)
-                                db.session.add(dietObj)
-
-            ######################################################################################################################################################################################
-                        iupperRange = len(json["extendedIngredients"])
-                        i_list= []
-                        for i in range(0,iupperRange):
-                            with db.session.no_autoflush:
-                                if "id" in json["extendedIngredients"][i]:
-                                    ingID = json["extendedIngredients"][i]["id"]
-                                    ingName = json["extendedIngredients"][i]["name"]
-                                    ingImage = json["extendedIngredients"][i]["image"]
-                                    ingAmount = json["extendedIngredients"][i]["amount"]
-                                    ingUnit = json["extendedIngredients"][i]["unit"]
-                                    ingOriginalString = json["extendedIngredients"][i]["originalString"]
-                                    #print (ingName)
-
-                                    ingredientamountObj = ingredientAmount(recipe_id = jRecipeID,
-                                                                           amount = ingAmount,
-                                                                           unit = ingUnit,
-                                                                           originalString = ingOriginalString,
-                                                                           ingredient_id = ingID
-                                                                           )
-                                    print (str(ingID) + ingName)
-                                    if ingID in i_list:
-                                        print ('no')
-                                        pass
-                                    else:
-                                        if Ingredient.query.get(ingID):
-                                            Ingredient.query.get(ingID).ingredientamounts.append(ingredientamountObj)
-                                            db.session.add(ingredientamountObj)
-                                            recipeObj.ingredients.append(Ingredient.query.get(ingID))
-                                        else:
-                                            ingredientObj = Ingredient(id=ingID, name=ingName, imageUrl=ingImage)
-                                            ingredientObj.ingredientamounts.append(ingredientamountObj)
-                                            recipeObj.ingredients.append(ingredientObj)
-                                            db.session.add(ingredientamountObj)
-                                            db.session.add(ingredientObj)
-                                            db.session.commit()
-                                        i_list.append(ingID)
-                                        print('yes')
-
-                        #print (iupperRange)
-
-                        if len(json["analyzedInstructions"]) == 1:
-                            db.session.add(recipeObj)
-                            similarAddList.append(jRecipeID)
-                            print ("New recipe has been added")
-
-        if(ifCommit):
-            db.session.commit()
-
-            for i in similarAddList:
-                for si in similarAddList:
-                    if(i == si):
-                        pass
                     else:
-                        for s in similarJson:
-                            if si == s["id"]:
-                                imageUrlString = 'https://spoonacular.com/recipeImages/' + s["image"]
-                                similarrecipeObj = SimilarRecipe(similarRecipe_id = s["id"],
-                                                                title = s["title"],
-                                                                imageUrl = imageUrlString,
-                                                                readyInMinutes = s["readyInMinutes"],
-                                                                recipe_id = i
-                                                                )
-                                Recipe.query.get(i).similarrecipes.append(similarrecipeObj)
+                        totalRequests += 1
+                        searchRequest = requests.get('https://spoonacular-recipe-food-nutrition-v1.p.mashape.com/recipes/'+str(sl)+'/information?includeNutrition=true',
+                        headers={
+                        "X-Mashape-Key": apiKey,
+                        "Accept": "application/json"
+                          }
+                        )
+                        json = searchRequest.json()
 
-            db.session.commit()
-            print ("Committed")
+                        #return str(len(json["cuisines"]))
+                        if len(json["analyzedInstructions"]) == 1 and len(json["cuisines"]):#!= 0 and len(json["dishTypes"]) != 0:# and len(json["diets"]) != 0:
 
-    return '<h1>Total Recipes: ' + str(Recipe.query.count()) + '<br>Total Similar Recipes: ' + str(SimilarRecipe.query.count()) + '<br>Total Requests: ' + str(totalRequests) + '</h1>'
+                            jRecipeID = json["id"]
 
-@app.route('/')
-def index():
-    return '<h1>This is the home page</h1>'
+                ######################################################################################################################################################################################
+                            # Creates a new Recipe Object
+                            recipeObj = Recipe(id=jRecipeID,
+                                               title = json["title"],
+                                               imageUrl = json["image"]
+                                               )
+                ######################################################################################################################################################################################
+                            cuisineString = ''
+                            for cuisines in json["cuisines"]:
+                                cuisineString += cuisines + ', '
+                            if "sourceName" in json:
+                                detailObj = Detail( recipeSourceUrl = json["sourceUrl"],
+                                                    recipeSourceName = json["sourceName"],
+                                                    readyInMinutes = json["readyInMinutes"],
+                                                    servings = json["servings"],
+                                                    pricePerServing = json["pricePerServing"]/100,
+                                                    saveCount = 0,
+                                                    recipe_id = jRecipeID,
+                                                    recipe = recipeObj
+                                                    )
+                            else:
+                                detailObj = Detail( recipeSourceUrl = json["sourceUrl"],
+                                                    recipeSourceName = '',
+                                                    readyInMinutes = json["readyInMinutes"],
+                                                    servings = json["servings"],
+                                                    pricePerServing = json["pricePerServing"]/100,
+                                                    saveCount = 0,
+                                                    recipe_id = jRecipeID,
+                                                    recipe = recipeObj
+                                                    )
+
+                ######################################################################################################################################################################################
+                            nutritionfactObj = NutritionFact (  vegetarian = json["vegetarian"],
+                                                                vegan = json["vegan"],
+                                                                glutenFree = json["glutenFree"],
+                                                                dairyFree = json["dairyFree"],
+                                                                calories = str(json["nutrition"]["nutrients"][0]["amount"]) + ' ' + json["nutrition"]["nutrients"][0]["unit"],
+                                                                fat = str(json["nutrition"]["nutrients"][1]["amount"]) + ' ' + json["nutrition"]["nutrients"][1]["unit"],
+                                                                saturatedFat = str(json["nutrition"]["nutrients"][2]["amount"]) + ' ' + json["nutrition"]["nutrients"][2]["unit"],
+                                                                carbohydrates = str(json["nutrition"]["nutrients"][3]["amount"]) + ' ' + json["nutrition"]["nutrients"][3]["unit"],
+                                                                sugar = str(json["nutrition"]["nutrients"][4]["amount"]) + ' ' + json["nutrition"]["nutrients"][4]["unit"],
+                                                                cholesterol = str(json["nutrition"]["nutrients"][5]["amount"]) + ' ' + json["nutrition"]["nutrients"][5]["unit"],
+                                                                sodium = str(json["nutrition"]["nutrients"][6]["amount"]) + ' ' + json["nutrition"]["nutrients"][6]["unit"],
+                                                                protein = str(json["nutrition"]["nutrients"][7]["amount"]) + ' ' + json["nutrition"]["nutrients"][7]["unit"],
+                                                                fiber = str(json["nutrition"]["nutrients"][14]["amount"]) + ' ' + json["nutrition"]["nutrients"][14]["unit"],
+                                                                recipe_id = json["id"],
+                                                                recipe = recipeObj
+                                                            )
+                ######################################################################################################################################################################################
+                            if len(json["analyzedInstructions"]) == 1:
+                                upperRange = len(json["analyzedInstructions"][0]["steps"])
+                                e_list = []
+
+                                for ins in range(0,upperRange):
+                                    insNumber = json["analyzedInstructions"][0]["steps"][ins]["number"]
+                                    insStep = json["analyzedInstructions"][0]["steps"][ins]["step"]
+
+                                    instructionObj = Instruction(stepNumber = insNumber,
+                                                                 stepDescription = insStep,
+                                                                 recipe_id = jRecipeID
+                                                                 )
+                                    recipeObj.instructions.append(instructionObj)
+
+                                    for eq in range(0, len(json["analyzedInstructions"][0]["steps"][ins]["equipment"])):
+                                        e = json["analyzedInstructions"][0]["steps"][ins]["equipment"][eq]
+                                        if e["name"] in e_list:
+                                            pass
+                                        else:
+                                            if Equipment.query.filter_by(name=e["name"]).first():
+                                                recipeObj.equipments.append(Equipment.query.filter_by(name=e["name"]).first())
+                                            else:
+                                                if "image" in e:
+                                                    e_image = e["image"]
+                                                else:
+                                                    e_image = ""
+                                                equipmentObj = Equipment(name=e["name"], imageUrl=e_image)
+                                                recipeObj.equipments.append(equipmentObj)
+                                                db.session.add(equipmentObj)
+                                                db.session.commit()
+                                            e_list.append(e["name"])
+
+                ######################################################################################################################################################################################
+                            cuisineUpperRange = len(json["cuisines"])
+                            for i in range(0,cuisineUpperRange):
+                                #print (json["cuisines"][i])
+                                if Cuisine.query.filter_by(name=json["cuisines"][i]).first():
+                                    recipeObj.cuisines.append(Cuisine.query.filter_by(name=json["cuisines"][i]).first())
+                                else:
+                                    cuisineObj = Cuisine(name=json["cuisines"][i])
+                                    recipeObj.cuisines.append(cuisineObj)
+                                    db.session.add(cuisineObj)
+
+                            dishtypeUpperRange = len(json["dishTypes"])
+                            for i in range(0,dishtypeUpperRange):
+                                if DishType.query.filter_by(name=json["dishTypes"][i]).first():
+                                    recipeObj.dishtypes.append(DishType.query.filter_by(name=json["dishTypes"][i]).first())
+                                else:
+                                    dishtypeObj = DishType(name=json["dishTypes"][i])
+                                    recipeObj.dishtypes.append(dishtypeObj)
+                                    db.session.add(dishtypeObj)
+
+                            dietUpperRange = len(json["diets"])
+                            for i in range(0,dietUpperRange):
+                                if Diet.query.filter_by(name=json["diets"][i]).first():
+                                    recipeObj.diets.append(Diet.query.filter_by(name=json["diets"][i]).first())
+                                else:
+                                    dietObj = Diet(name=json["diets"][i])
+                                    recipeObj.diets.append(dietObj)
+                                    db.session.add(dietObj)
+
+                ######################################################################################################################################################################################
+                            iupperRange = len(json["extendedIngredients"])
+                            i_list= []
+                            for i in range(0,iupperRange):
+                                with db.session.no_autoflush:
+                                    if "id" in json["extendedIngredients"][i]:
+                                        ingID = json["extendedIngredients"][i]["id"]
+                                        ingName = json["extendedIngredients"][i]["name"]
+                                        ingImage = json["extendedIngredients"][i]["image"]
+                                        ingAmount = json["extendedIngredients"][i]["amount"]
+                                        ingUnit = json["extendedIngredients"][i]["unit"]
+                                        ingOriginalString = json["extendedIngredients"][i]["originalString"]
+                                        #print (ingName)
+
+                                        ingredientamountObj = ingredientAmount(recipe_id = jRecipeID,
+                                                                               amount = ingAmount,
+                                                                               unit = ingUnit,
+                                                                               originalString = ingOriginalString,
+                                                                               ingredient_id = ingID
+                                                                               )
+                                        print (str(ingID) + ingName)
+                                        if ingID in i_list:
+                                            print ('no')
+                                            pass
+                                        else:
+                                            if Ingredient.query.get(ingID):
+                                                Ingredient.query.get(ingID).ingredientamounts.append(ingredientamountObj)
+                                                db.session.add(ingredientamountObj)
+                                                recipeObj.ingredients.append(Ingredient.query.get(ingID))
+                                            else:
+                                                ingredientObj = Ingredient(id=ingID, name=ingName, imageUrl=ingImage)
+                                                ingredientObj.ingredientamounts.append(ingredientamountObj)
+                                                recipeObj.ingredients.append(ingredientObj)
+                                                db.session.add(ingredientamountObj)
+                                                db.session.add(ingredientObj)
+                                                db.session.commit()
+                                            i_list.append(ingID)
+                                            print('yes')
+
+                            #print (iupperRange)
+
+                            if len(json["analyzedInstructions"]) == 1:
+                                db.session.add(recipeObj)
+                                similarAddList.append(jRecipeID)
+                                print ("New recipe has been added")
+
+            if(ifCommit):
+                db.session.commit()
+
+                for i in similarAddList:
+                    for si in similarAddList:
+                        if(i == si):
+                            pass
+                        else:
+                            for s in similarJson:
+                                if si == s["id"]:
+                                    imageUrlString = 'https://spoonacular.com/recipeImages/' + s["image"]
+                                    similarrecipeObj = SimilarRecipe(similarRecipe_id = s["id"],
+                                                                    title = s["title"],
+                                                                    imageUrl = imageUrlString,
+                                                                    readyInMinutes = s["readyInMinutes"],
+                                                                    recipe_id = i
+                                                                    )
+                                    Recipe.query.get(i).similarrecipes.append(similarrecipeObj)
+
+                db.session.commit()
+                print ("Committed")
+
+    return render_template('config.html', random = request.form['random'], api = request.form['api'], totalRecipes = str(Recipe.query.count()), totalSimilar = str(SimilarRecipe.query.count()),  totalRequests = str(totalRequests))
+
 
 if __name__ == '__main__':
     app.run(debug=True)
